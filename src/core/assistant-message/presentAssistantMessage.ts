@@ -270,11 +270,37 @@ export async function presentAssistantMessage(cline: Task) {
 				},
 			}
 
-			await useMcpToolTool.handle(cline, syntheticToolUse, {
-				askApproval,
-				handleError,
-				pushToolResult,
-			})
+			// Ensure system prompt / handshake is available for MCP tool calls
+			try {
+				await (cline as any).getSystemPrompt()
+			} catch (err) {
+				cline.consecutiveMistakeCount++
+				const msg = t("get_system_prompt")
+				if (toolCallId) {
+					cline.pushToolResultToUserContent({
+						type: "tool_result",
+						tool_use_id: sanitizeToolUseId(toolCallId),
+						content: formatResponse.toolError(msg),
+						is_error: true,
+					})
+				}
+				break
+			}
+
+			await runWithHooks(
+				{
+					intentId: mcpBlock.id ?? (mcpBlock as any).params?.intent_id ?? (mcpBlock as any).params?.intentId,
+					metadata: { tool: `mcp:${mcpBlock.serverName}/${mcpBlock.toolName}`, params: mcpBlock.arguments },
+				},
+				async (ctx) => {
+					await useMcpToolTool.handle(cline, syntheticToolUse, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					return { operation: "use_mcp_tool", params: syntheticToolUse.params }
+				},
+			)
 			break
 		}
 		case "text": {
@@ -446,6 +472,42 @@ export async function presentAssistantMessage(cline: Task) {
 
 			// Store approval feedback to merge into tool result (GitHub #10465)
 			let approvalFeedback: { text: string; images?: string[] } | undefined
+
+			// Ensure system prompt is present for tools that require the full handshake.
+			const toolsRequiringSystemPrompt = new Set([
+				"write_to_file",
+				"apply_diff",
+				"edit",
+				"search_and_replace",
+				"search_replace",
+				"edit_file",
+				"apply_patch",
+				"execute_command",
+				"use_mcp_tool",
+				"access_mcp_resource",
+				"new_task",
+				"attempt_completion",
+				"run_slash_command",
+				"skill",
+				"generate_image",
+				"update_todo_list",
+			])
+
+			if (!block.partial && toolsRequiringSystemPrompt.has(String(block.name))) {
+				try {
+					await (cline as any).getSystemPrompt()
+				} catch (err) {
+					cline.consecutiveMistakeCount++
+					const msg = t("get_system_prompt")
+					cline.pushToolResultToUserContent({
+						type: "tool_result",
+						tool_use_id: sanitizeToolUseId(toolCallId),
+						content: formatResponse.toolError(msg),
+						is_error: true,
+					})
+					break
+				}
+			}
 
 			const pushToolResult = (content: ToolResponse) => {
 				// Native tool calling: only allow ONE tool_result per tool call
@@ -706,52 +768,106 @@ export async function presentAssistantMessage(cline: Task) {
 					)
 					break
 				case "update_todo_list":
-					await updateTodoListTool.handle(cline, block as ToolUse<"update_todo_list">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "update_todo_list", params: (block as any).params },
+						},
+						async (ctx) => {
+							await updateTodoListTool.handle(cline, block as ToolUse<"update_todo_list">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "update_todo_list", params: (block as any).params }
+						},
+					)
 					break
 				case "apply_diff":
 					await checkpointSaveAndMark(cline)
-					await applyDiffToolClass.handle(cline, block as ToolUse<"apply_diff">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "apply_diff", params: (block as any).params },
+						},
+						async (ctx) => {
+							await applyDiffToolClass.handle(cline, block as ToolUse<"apply_diff">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "apply_diff", params: (block as any).params }
+						},
+					)
 					break
 				case "edit":
 				case "search_and_replace":
 					await checkpointSaveAndMark(cline)
-					await editTool.handle(cline, block as ToolUse<"edit">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "edit", params: (block as any).params },
+						},
+						async (ctx) => {
+							await editTool.handle(cline, block as ToolUse<"edit">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "edit", params: (block as any).params }
+						},
+					)
 					break
 				case "search_replace":
 					await checkpointSaveAndMark(cline)
-					await searchReplaceTool.handle(cline, block as ToolUse<"search_replace">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "search_replace", params: (block as any).params },
+						},
+						async (ctx) => {
+							await searchReplaceTool.handle(cline, block as ToolUse<"search_replace">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "search_replace", params: (block as any).params }
+						},
+					)
 					break
 				case "edit_file":
 					await checkpointSaveAndMark(cline)
-					await editFileTool.handle(cline, block as ToolUse<"edit_file">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "edit_file", params: (block as any).params },
+						},
+						async (ctx) => {
+							await editFileTool.handle(cline, block as ToolUse<"edit_file">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "edit_file", params: (block as any).params }
+						},
+					)
 					break
 				case "apply_patch":
 					await checkpointSaveAndMark(cline)
-					await applyPatchTool.handle(cline, block as ToolUse<"apply_patch">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "apply_patch", params: (block as any).params },
+						},
+						async (ctx) => {
+							await applyPatchTool.handle(cline, block as ToolUse<"apply_patch">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "apply_patch", params: (block as any).params }
+						},
+					)
 					break
 				case "read_file":
 					// Type assertion is safe here because we're in the "read_file" case
@@ -783,11 +899,20 @@ export async function presentAssistantMessage(cline: Task) {
 					})
 					break
 				case "execute_command":
-					await executeCommandTool.handle(cline, block as ToolUse<"execute_command">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "execute_command", params: (block as any).params },
+						},
+						async (ctx) => {
+							await executeCommandTool.handle(cline, block as ToolUse<"execute_command">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "execute_command", params: (block as any).params }
+						},
+					)
 					break
 				case "read_command_output":
 					await readCommandOutputTool.handle(cline, block as ToolUse<"read_command_output">, {
@@ -797,41 +922,86 @@ export async function presentAssistantMessage(cline: Task) {
 					})
 					break
 				case "use_mcp_tool":
-					await useMcpToolTool.handle(cline, block as ToolUse<"use_mcp_tool">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "use_mcp_tool", params: (block as any).params },
+						},
+						async (ctx) => {
+							await useMcpToolTool.handle(cline, block as ToolUse<"use_mcp_tool">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "use_mcp_tool", params: (block as any).params }
+						},
+					)
 					break
 				case "access_mcp_resource":
-					await accessMcpResourceTool.handle(cline, block as ToolUse<"access_mcp_resource">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "access_mcp_resource", params: (block as any).params },
+						},
+						async (ctx) => {
+							await accessMcpResourceTool.handle(cline, block as ToolUse<"access_mcp_resource">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "access_mcp_resource", params: (block as any).params }
+						},
+					)
 					break
 				case "ask_followup_question":
-					await askFollowupQuestionTool.handle(cline, block as ToolUse<"ask_followup_question">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "ask_followup_question", params: (block as any).params },
+						},
+						async (ctx) => {
+							await askFollowupQuestionTool.handle(cline, block as ToolUse<"ask_followup_question">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "ask_followup_question", params: (block as any).params }
+						},
+					)
 					break
 				case "switch_mode":
-					await switchModeTool.handle(cline, block as ToolUse<"switch_mode">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "switch_mode", params: (block as any).params },
+						},
+						async (ctx) => {
+							await switchModeTool.handle(cline, block as ToolUse<"switch_mode">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "switch_mode", params: (block as any).params }
+						},
+					)
 					break
 				case "new_task":
 					await checkpointSaveAndMark(cline)
-					await newTaskTool.handle(cline, block as ToolUse<"new_task">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-						toolCallId: block.id,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "new_task", params: (block as any).params },
+						},
+						async (ctx) => {
+							await newTaskTool.handle(cline, block as ToolUse<"new_task">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+								toolCallId: block.id,
+							})
+							return { operation: "new_task", params: (block as any).params }
+						},
+					)
 					break
 				case "attempt_completion": {
 					const completionCallbacks: AttemptCompletionCallbacks = {
@@ -841,34 +1011,70 @@ export async function presentAssistantMessage(cline: Task) {
 						askFinishSubTaskApproval,
 						toolDescription,
 					}
-					await attemptCompletionTool.handle(
-						cline,
-						block as ToolUse<"attempt_completion">,
-						completionCallbacks,
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "attempt_completion", params: (block as any).params },
+						},
+						async (ctx) => {
+							await attemptCompletionTool.handle(
+								cline,
+								block as ToolUse<"attempt_completion">,
+								completionCallbacks,
+							)
+							return { operation: "attempt_completion", params: (block as any).params }
+						},
 					)
 					break
 				}
 				case "run_slash_command":
-					await runSlashCommandTool.handle(cline, block as ToolUse<"run_slash_command">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "run_slash_command", params: (block as any).params },
+						},
+						async (ctx) => {
+							await runSlashCommandTool.handle(cline, block as ToolUse<"run_slash_command">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "run_slash_command", params: (block as any).params }
+						},
+					)
 					break
 				case "skill":
-					await skillTool.handle(cline, block as ToolUse<"skill">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "skill", params: (block as any).params },
+						},
+						async (ctx) => {
+							await skillTool.handle(cline, block as ToolUse<"skill">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "skill", params: (block as any).params }
+						},
+					)
 					break
 				case "generate_image":
 					await checkpointSaveAndMark(cline)
-					await generateImageTool.handle(cline, block as ToolUse<"generate_image">, {
-						askApproval,
-						handleError,
-						pushToolResult,
-					})
+					await runWithHooks(
+						{
+							intentId: (block as any).params?.intent_id ?? (block as any).params?.intentId,
+							metadata: { tool: "generate_image", params: (block as any).params },
+						},
+						async (ctx) => {
+							await generateImageTool.handle(cline, block as ToolUse<"generate_image">, {
+								askApproval,
+								handleError,
+								pushToolResult,
+							})
+							return { operation: "generate_image", params: (block as any).params }
+						},
+					)
 					break
 				default: {
 					// Handle unknown/invalid tool names OR custom tools
