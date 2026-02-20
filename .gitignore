@@ -55,6 +55,3 @@ qdrant_storage/
 plans/
 
 roo-cli-*.tar.gz*
-
-# Orchestration
-.orchestration/
