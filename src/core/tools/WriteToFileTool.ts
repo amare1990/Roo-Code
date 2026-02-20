@@ -17,10 +17,16 @@ import { convertNewFileToUnifiedDiff, computeDiffStats, sanitizeUnifiedDiff } fr
 import type { ToolUse } from "../../shared/tools"
 
 import { BaseTool, ToolCallbacks } from "./BaseTool"
+import { prefixedSha256 } from "../../hooks/utils/hashUtils"
 
 interface WriteToFileParams {
 	path: string
 	content: string
+	// Optional optimistic concurrency snapshot hash provided by the agent
+	snapshot_hash?: string
+	// Optional metadata from agent
+	intent_id?: string
+	mutation_class?: string
 }
 
 export class WriteToFileTool extends BaseTool<"write_to_file"> {
@@ -30,6 +36,9 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		const { pushToolResult, handleError, askApproval } = callbacks
 		const relPath = params.path
 		let newContent = params.content
+
+		// Concurrency check: if the agent supplied a snapshot_hash, compare it to current file
+		// to detect stale reads and prevent lost updates.
 
 		if (!relPath) {
 			task.consecutiveMistakeCount++
@@ -59,6 +68,32 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 
 		let fileExists: boolean
 		const absolutePath = path.resolve(task.cwd, relPath)
+
+		// If the caller provided a snapshot_hash, compute current file hash and compare
+		if ((params as any).snapshot_hash) {
+			let currentHash: string | null = null
+			try {
+				if (await fileExistsAtPath(absolutePath)) {
+					const currentContent = await fs.readFile(absolutePath, "utf-8")
+					currentHash = prefixedSha256(currentContent)
+				}
+			} catch (e) {
+				currentHash = null
+			}
+
+			const expected = (params as any).snapshot_hash
+			if (expected && currentHash && expected !== currentHash) {
+				// Stale file detected
+				task.recordToolError("write_to_file")
+				pushToolResult(
+					formatResponse.toolError(
+						"Stale File: the file has changed since it was read. Please re-checkout and retry.",
+					),
+				)
+				await task.diffViewProvider.reset()
+				return
+			}
+		}
 
 		if (task.diffViewProvider.editType !== undefined) {
 			fileExists = task.diffViewProvider.editType === "modify"

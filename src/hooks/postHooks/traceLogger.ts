@@ -1,5 +1,5 @@
 import type { PostHook } from "../types"
-import { appendAgentTrace } from "../utils/fileUtils"
+import { appendAgentTrace, getGitRevision } from "../utils/fileUtils"
 import { prefixedSha256 } from "../utils/hashUtils"
 
 export const traceLogger: PostHook = async (ctx, result) => {
@@ -10,6 +10,8 @@ export const traceLogger: PostHook = async (ctx, result) => {
 		const res: any = result
 		const content: string = res.content ?? ""
 		const path = res.path ?? res.filePath ?? "unknown"
+
+		const revision = await getGitRevision()
 
 		const ranges = [
 			{
@@ -25,7 +27,7 @@ export const traceLogger: PostHook = async (ctx, result) => {
 					? (globalThis as any).crypto.randomUUID()
 					: String(Date.now()),
 			timestamp: new Date().toISOString(),
-			vcs: { revision_id: null },
+			vcs: { revision_id: revision },
 			files: [
 				{
 					relative_path: path,
