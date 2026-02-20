@@ -1,6 +1,10 @@
 import fs from "fs/promises"
 import path from "path"
 import YAML from "yaml"
+import { exec as _exec } from "child_process"
+import { promisify } from "util"
+
+const exec = promisify(_exec)
 
 export interface ActiveIntent {
 	id: string
@@ -29,6 +33,15 @@ export async function appendAgentTrace(entry: unknown, cwd = process.cwd()): Pro
 	const file = path.join(dir, "agent_trace.jsonl")
 	const line = JSON.stringify(entry) + "\n"
 	await fs.appendFile(file, line, "utf8")
+}
+
+export async function getGitRevision(cwd = process.cwd()): Promise<string | null> {
+	try {
+		const { stdout } = await exec("git rev-parse --short HEAD", { cwd })
+		return String(stdout || "").trim() || null
+	} catch (err) {
+		return null
+	}
 }
 
 export async function ensureFileExists(relativePath: string, cwd = process.cwd()): Promise<void> {
